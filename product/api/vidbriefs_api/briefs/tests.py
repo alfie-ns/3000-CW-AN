@@ -143,6 +143,8 @@ class VideoEndpointTests(APITestCase):
 
         self.assertEqual(response.status_code, 422)
         self.assertIn('detail', response.data)
+        self.assertFalse(Video.objects.exists()) # ensure no video is stored when transcript is empty
+        
 
     def test_fetch_errors_map_to_status_codes(self, api):  # each failure the app must show, never a 500
         cases = [
