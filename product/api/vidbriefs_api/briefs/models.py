@@ -22,3 +22,16 @@ class TranscriptSegment(models.Model):
 
     def __str__(self):
         return f'{self.video} @ {self.start:.1f}s'
+
+
+class Part(models.Model):
+    video = models.ForeignKey(Video, on_delete=models.CASCADE, related_name='parts')
+    start = models.FloatField()  # seconds into the video
+    end = models.FloatField()
+    text = models.TextField()
+
+    class Meta:
+        ordering = ['video', 'start']
+
+    def __str__(self):
+        return f'{self.video} part @ {self.start:.1f}s'
