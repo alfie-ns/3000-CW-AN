@@ -68,6 +68,19 @@ class FetchTranscriptTests(TestCase):
             fetch_transcript('xxxxxxxxxxx')
         self.assertFalse(Video.objects.exists())
 
+    def test_double_tap_stores_captions_once(self, api): # second request finishes whilst the first is still fetching
+        calls = []
+
+        def fetch(youtube_id):
+            calls.append(youtube_id)
+            if len(calls) == 1:
+                fetch_transcript(youtube_id)  # the double tap
+            return FAKE_CAPTIONS
+
+        api.return_value.fetch.side_effect = fetch
+        fetch_transcript('abcdefghijk')
+        self.assertEqual(TranscriptSegment.objects.count(), 2)
+
 
 class YouTubeIdTests(TestCase):
 
