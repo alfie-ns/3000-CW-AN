@@ -15,6 +15,8 @@ def fetch_transcript(youtube_id, title=''):
 
     with transaction.atomic():  # no Video row without its segments
         video, _ = Video.objects.get_or_create(youtube_id=youtube_id, defaults={'title': title or youtube_id})
+        if video.segments.exists():
+            return video  # a double tap already stored it
         TranscriptSegment.objects.bulk_create(
             TranscriptSegment(video=video, start=s.start, end=s.start + s.duration, text=s.text)
             for s in fetched
