@@ -10,6 +10,8 @@ def fetch_transcript(youtube_id, title=''):
         return video  # store without needing to re-fetch
 
     fetched = YouTubeTranscriptApi().fetch(youtube_id) # fetch the transcript from YouTube API
+    if not fetched:
+        return None # kill process if no video-transcript
 
     with transaction.atomic():  # no Video row without its segments
         video, _ = Video.objects.get_or_create(youtube_id=youtube_id, defaults={'title': title or youtube_id})

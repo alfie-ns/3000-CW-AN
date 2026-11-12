@@ -70,6 +70,6 @@ class VideoView(APIView):
                 if isinstance(e, kinds):
                     return Response({'detail': message}, status=code)
 
-        if not video.segments.exists():  # YouTube returned an empty caption track
+        if video is None:  # YouTube returned an empty caption track
             return Response({'detail': "This video's transcript is empty"}, status=422)
         return Response(VideoSerializer(video).data, status=200 if stored else 201) # return serialised video data with status code (200 if already stored, 201 if newly created)
