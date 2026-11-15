@@ -9,7 +9,8 @@ from youtube_transcript_api import (
     PoTokenRequired, TranscriptsDisabled, VideoUnavailable,
 )
 
-from .models import Video, TranscriptSegment
+from .models import Video, TranscriptSegment, Part
+from .parts import MAX_SECONDS, MAX_WORDS, cut_parts
 from .transcripts import fetch_transcript
 from .views import youtube_id_from
 
@@ -80,6 +81,47 @@ class FetchTranscriptTests(TestCase):
         api.return_value.fetch.side_effect = fetch
         fetch_transcript('abcdefghijk')
         self.assertEqual(TranscriptSegment.objects.count(), 2)
+
+
+# NOTE: Tests for cut_parts, i.e., the parts Jev will score
+
+def lines(count, seconds=5.0, words=10):  # evenly spaced fake caption lines
+    return [FetchedTranscriptSnippet(text=' '.join(['w'] * words), start=i * seconds, duration=seconds) for i in range(count)]
+
+
+class CutPartsTests(TestCase):
+
+    def test_short_video_is_one_part(self):
+        self.assertEqual(len(cut_parts(lines(6))), 1)  # 30 s
+
+    def test_parts_stay_under_both_caps(self):
+        for count, words in [(40, 10), (40, 30)]:  # time-bound, then word-bound
+            with self.subTest(words=words):
+                for start, end, text in cut_parts(lines(count, words=words)):
+                    self.assertLessEqual(end - start, MAX_SECONDS)
+                    self.assertLessEqual(len(text.split()), MAX_WORDS)
+
+    def test_no_caption_is_split_and_order_is_kept(self):
+        parts = cut_parts(FAKE_CAPTIONS)  # out of order on purpose
+        self.assertEqual(parts, [(0.5, 6.5, 'first line second line')])
+
+    def test_overlapping_captions_still_close_the_part(self):  # a long line can outlast the next one
+        long_then_short = [FetchedTranscriptSnippet(text='a', start=0.0, duration=65.0), FetchedTranscriptSnippet(text='b', start=2.0, duration=3.0)]
+        self.assertEqual(len(cut_parts(long_then_short)), 2)
+
+    def test_fetch_stores_parts(self):
+        with patch('briefs.transcripts.YouTubeTranscriptApi') as api:
+            api.return_value.fetch.return_value = lines(30)  # 150 s
+            fetch_transcript('abcdefghijk')
+        self.assertEqual([(p.start, p.end) for p in Part.objects.all()], [(0.0, 60.0), (60.0, 120.0), (120.0, 150.0)])
+
+    def test_video_saved_before_parts_is_rebuilt(self):  # e.g. sent before this step existed
+        video = Video.objects.create(youtube_id='abcdefghijk', title='old')
+        TranscriptSegment.objects.create(video=video, start=0.0, end=5.0, text='old line')
+        with patch('briefs.transcripts.YouTubeTranscriptApi') as api:
+            api.return_value.fetch.return_value = lines(30)
+            fetch_transcript('abcdefghijk')
+        self.assertEqual((TranscriptSegment.objects.count(), Part.objects.count()), (30, 3))  # old line gone, no duplicates
 
 
 class YouTubeIdTests(TestCase):
