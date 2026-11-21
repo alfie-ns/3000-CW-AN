@@ -220,3 +220,54 @@ class VideoEndpointTests(APITestCase):
                 self.assertEqual(response.status_code, code)
                 self.assertIn('detail', response.data)
         self.assertFalse(Video.objects.exists())
+
+
+# NOTE: Tests for POST /api/videos/<youtube_id>/ask/, i.e., the AI's answer about a stored video
+
+@patch('briefs.res.OpenAI')  # no real OpenAI calls
+class AskEndpointTests(APITestCase):
+
+    def setUp(self):
+        self.video = Video.objects.create(youtube_id='abcdefghijk', title='Test video')
+        Part.objects.create(video=self.video, start=0.0, end=5.0, text='first part')
+
+    def ask(self, body, youtube_id='abcdefghijk'):
+        return self.client.post(f'/api/videos/{youtube_id}/ask/', body, format='json')
+
+    def test_answers_with_terra_at_max_effort(self, openai):
+        openai.return_value.responses.create.return_value.output_text = 'an answer [1]'
+        openai.return_value.responses.create.return_value.usage.output_tokens_details.reasoning_tokens = 42
+        response = self.ask({'question': 'What is it about?'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual((response.data['answer'], response.data['reasoning_tokens']), ('an answer [1]', 42))
+        sent = openai.return_value.responses.create.call_args.kwargs
+        self.assertEqual((sent['model'], sent['reasoning']), ('gpt-6.1-terra', {'effort': 'max'}))
+        self.assertTrue(sent['input'].startswith('Video: "Test video", 0:05 long'))
+        self.assertTrue(sent['input'].endswith('Question: What is it about?'))  # last, so the start caches
+
+    def test_empty_answer_returns_502_and_missing_usage_is_none(self, openai):
+        reply = openai.return_value.responses.create.return_value
+        reply.output_text, reply.usage = '', None
+        self.assertEqual(self.ask({'question': 'Why?'}).status_code, 502)
+        reply.output_text = 'an answer [1]'
+        response = self.ask({'question': 'Why?'})
+        self.assertEqual((response.status_code, response.data['reasoning_tokens']), (200, None))
+
+    def test_bad_question_or_unknown_video_never_calls_openai(self, openai):
+        for body, youtube_id, code in [({}, 'abcdefghijk', 400), ({'question': '  '}, 'abcdefghijk', 400),
+                                       ({'question': 42}, 'abcdefghijk', 400), ({'question': 'Why?'}, 'zzzzzzzzzzz', 404)]:
+            with self.subTest(body=body, youtube_id=youtube_id):
+                response = self.ask(body, youtube_id)
+                self.assertEqual(response.status_code, code)
+                self.assertIn('detail', response.data)
+        openai.assert_not_called()
+
+    def test_openai_failures_map_to_status_codes(self, openai):  # never a 500
+        from openai import APIConnectionError, OpenAIError
+        for error, code in [(APIConnectionError(request=None), 503), (OpenAIError('no key'), 502)]:
+            with self.subTest(error=type(error).__name__):
+                openai.return_value.responses.create.side_effect = error
+                response = self.ask({'question': 'Why?'})
+                self.assertEqual(response.status_code, code)
+                self.assertIn('detail', response.data)
